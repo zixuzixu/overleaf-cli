@@ -73,6 +73,24 @@ def _walk_folder_entities(folder: dict, prefix: str, entities: dict):
         _walk_folder_entities(sub, sub_prefix, entities)
 
 
+def delete_project(client: OverleafClient, project_id: str):
+    """Delete a project on Overleaf."""
+    # Need CSRF from dashboard (not project page, since project may be gone)
+    resp = client.session.get(client.base_url + "/project", timeout=15)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    meta = soup.find("meta", {"name": "ol-csrfToken"})
+    if not meta or not meta.get("content"):
+        raise RuntimeError("Could not get CSRF token.")
+    csrf = meta["content"]
+    resp = client.session.delete(
+        client.base_url + f"/project/{project_id}",
+        headers={"x-csrf-token": csrf},
+        timeout=15,
+    )
+    resp.raise_for_status()
+
+
 def create_project_from_zip(client: OverleafClient, project_name: str,
                             zip_data: bytes) -> str:
     """Create a new project on Overleaf by uploading a zip file.

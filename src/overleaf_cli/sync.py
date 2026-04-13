@@ -11,6 +11,7 @@ from overleaf_cli.manifest import Manifest, hash_file, hash_content
 from overleaf_cli.ignore import load_patterns, is_ignored
 from overleaf_cli.project import (
     create_project_from_zip,
+    delete_project,
     download_project_zip,
     upload_file,
     create_folder,
@@ -125,8 +126,14 @@ def pull(client: OverleafClient, cookie_value: str, manifest: Manifest):
 
 
 def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
-    """Push local changes to remote via REST upload."""
+    """Push local changes by re-creating the project from zip.
+
+    Overleaf's CDN blocks WebSocket, so we can't update files individually.
+    Instead: delete old project → re-create from zip → update manifest.
+    """
     project_id = manifest.project_id
+    project_name = manifest.data.get("project_name", "Untitled")
+    base_url = manifest.base_url
     patterns = load_patterns(manifest.project_dir)
     added, modified, deleted = manifest.get_local_changes(
         ignore_fn=lambda p: is_ignored(p, patterns)
@@ -136,62 +143,44 @@ def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
         click.echo("Nothing to push.")
         return
 
-    # Get project data (root folder ID and file tree) from project page
-    proj_data = get_project_data(client, project_id)
-    root_folder_id = proj_data["root_folder_id"]
-    remote_entities = proj_data["entities"]  # {path: {id, type, folder_id}}
+    click.echo(f"Changes: {len(added)} added, {len(modified)} modified, {len(deleted)} deleted")
 
-    # Upload new and modified files
-    for rel_path in added + modified:
-        local_path = manifest.project_dir / rel_path
-        parts = Path(rel_path).parts
-        folder_id = root_folder_id
+    # Collect all current local files (non-ignored)
+    files_to_upload = []
+    for path in sorted(manifest.project_dir.rglob("*")):
+        if path.is_dir():
+            continue
+        rel = str(path.relative_to(manifest.project_dir))
+        if rel.startswith(".overleaf") or rel.startswith("."):
+            continue
+        if is_ignored(rel, patterns):
+            continue
+        files_to_upload.append((rel, path))
 
-        if len(parts) > 1:
-            folder_id = _ensure_folders(client, project_id, root_folder_id,
-                                        parts[:-1], remote_entities)
+    # Create zip
+    click.echo(f"  Packing {len(files_to_upload)} files...")
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel, path in files_to_upload:
+            zf.write(path, rel)
+    zip_data = zip_buf.getvalue()
 
-        # If file exists remotely, delete first (Overleaf doesn't support overwrite)
-        if rel_path in remote_entities:
-            entity = remote_entities[rel_path]
-            try:
-                delete_entity(client, project_id, entity["type"], entity["id"])
-            except Exception:
-                pass
+    # Delete old project
+    click.echo(f"  Replacing project on Overleaf...")
+    delete_project(client, project_id)
 
-        upload_file(client, project_id, folder_id, local_path, parts[-1])
-        content_hash = hash_file(local_path)
-        manifest.set_file(rel_path, "", _guess_type(rel_path), content_hash)
-        prefix = "+" if rel_path in added else "M"
-        click.echo(f"  {prefix} {rel_path}")
+    # Re-create from zip
+    new_project_id = create_project_from_zip(client, project_name, zip_data)
 
-    # Delete remote files that were deleted locally
-    for rel_path in deleted:
-        if rel_path in remote_entities:
-            entity = remote_entities[rel_path]
-            try:
-                delete_entity(client, project_id, entity["type"], entity["id"])
-                click.echo(f"  - {rel_path}")
-            except Exception as e:
-                click.echo(f"  ! Failed to delete {rel_path}: {e}")
-        manifest.remove_file(rel_path)
+    # Update manifest
+    manifest.data["project_id"] = new_project_id
+    manifest.data["files"] = {}
+    for rel, path in files_to_upload:
+        manifest.set_file(rel, "", _guess_type(rel), hash_file(path))
 
     manifest.save()
-
-
-def _ensure_folders(client: OverleafClient, project_id: str,
-                    root_folder_id: str, folder_parts: tuple,
-                    remote_entities: dict) -> str:
-    """Ensure folder path exists, creating as needed. Return leaf folder ID."""
-    current_id = root_folder_id
-    for part in folder_parts:
-        try:
-            new_id = create_folder(client, project_id, current_id, part)
-            if new_id:
-                current_id = new_id
-        except Exception:
-            pass
-    return current_id
+    click.echo(f"  Project re-created: {new_project_id}")
+    click.echo(f"  View at: {base_url}/project/{new_project_id}")
 
 
 def status(cookie_value: str, manifest: Manifest):
