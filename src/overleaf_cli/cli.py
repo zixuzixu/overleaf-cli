@@ -155,3 +155,16 @@ def status_cmd():
     base_url = session.get("base_url", DEFAULT_BASE_URL) if session else DEFAULT_BASE_URL
     cookie = get_cookie(base_url)
     status(cookie, manifest)
+
+
+@main.command()
+def install():
+    """Install AI agent skill for Claude Code / Cursor."""
+    from overleaf_cli.skill_content import SKILL_MD
+
+    target_dir = Path.home() / ".claude" / "skills" / "overleaf-cli"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "SKILL.md"
+    target.write_text(SKILL_MD)
+    click.echo(f"Skill installed to: {target}")
+    click.echo("Claude Code can now use the /overleaf skill.")
