@@ -10,6 +10,7 @@ from overleaf_cli.client import OverleafClient
 from overleaf_cli.manifest import Manifest, hash_file, hash_content
 from overleaf_cli.ignore import load_patterns, is_ignored
 from overleaf_cli.project import (
+    create_project_from_zip,
     download_project_zip,
     upload_file,
     create_folder,
@@ -213,3 +214,84 @@ def status(cookie_value: str, manifest: Manifest):
         click.echo("No local changes.")
 
     click.echo("\n(Run 'overleaf pull' to check for remote changes)")
+
+
+def init_project(project_id: str, project_name: str, base_url: str,
+                 project_dir: Path):
+    """Initialize current directory as an Overleaf project (link to existing project)."""
+    manifest = Manifest(project_dir)
+    if manifest.project_id:
+        raise click.ClickException(
+            f"Already linked to project '{manifest.project_id}'. "
+            "Remove .overleaf/ to re-init."
+        )
+    manifest.init(project_id, project_name, base_url)
+
+    # Scan local files and record in manifest
+    patterns = load_patterns(project_dir)
+    count = 0
+    for path in sorted(project_dir.rglob("*")):
+        if path.is_dir():
+            continue
+        rel = str(path.relative_to(project_dir))
+        if rel.startswith(".overleaf"):
+            continue
+        if is_ignored(rel, patterns):
+            continue
+        manifest.set_file(rel, "", _guess_type(rel), hash_file(path))
+        click.echo(f"  {rel}")
+        count += 1
+
+    manifest.save()
+    click.echo(f"\nInitialized with {count} files. Linked to project '{project_id}'.")
+    click.echo("Run 'overleaf push' to upload files to Overleaf.")
+
+
+def create_and_upload(client: OverleafClient, cookie_value: str,
+                      project_name: str, base_url: str, project_dir: Path):
+    """Create a new project on Overleaf by zipping and uploading local files."""
+    manifest = Manifest(project_dir)
+    if manifest.project_id:
+        raise click.ClickException(
+            f"Already linked to project '{manifest.project_id}'. "
+            "Remove .overleaf/ to re-init."
+        )
+
+    # Collect files to upload (respecting ignore rules)
+    patterns = load_patterns(project_dir)
+    files_to_upload = []
+    for path in sorted(project_dir.rglob("*")):
+        if path.is_dir():
+            continue
+        rel = str(path.relative_to(project_dir))
+        if rel.startswith(".overleaf") or rel.startswith("."):
+            continue
+        if is_ignored(rel, patterns):
+            continue
+        files_to_upload.append((rel, path))
+
+    if not files_to_upload:
+        raise click.ClickException("No files to upload (all files ignored or directory empty).")
+
+    # Create zip from local files
+    click.echo(f"Packing {len(files_to_upload)} files...")
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel, path in files_to_upload:
+            zf.write(path, rel)
+    zip_data = zip_buf.getvalue()
+
+    # Upload zip to create project
+    click.echo(f"Creating project '{project_name}' on Overleaf...")
+    project_id = create_project_from_zip(client, project_name, zip_data)
+    click.echo(f"  Project created: {project_id}")
+
+    # Init manifest with uploaded files
+    manifest.init(project_id, project_name, base_url)
+    for rel, path in files_to_upload:
+        manifest.set_file(rel, "", _guess_type(rel), hash_file(path))
+        click.echo(f"  + {rel}")
+
+    manifest.save()
+    click.echo(f"\nUploaded {len(files_to_upload)} files.")
+    click.echo(f"View at: {base_url}/project/{project_id}")
