@@ -29,6 +29,50 @@ def list_projects(client: OverleafClient) -> list[dict]:
     return projects
 
 
+def get_project_data(client: OverleafClient, project_id: str) -> dict:
+    """Get project root folder ID and entity list from project page HTML.
+    Returns {root_folder_id: str, entities: {path: {id, type, folder_id}}}.
+    """
+    resp = client.get(f"/project/{project_id}", timeout=15)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Extract root folder from ol-rootFolder meta tag
+    root_meta = soup.find("meta", {"name": "ol-rootFolder"})
+    if not root_meta or not root_meta.get("content"):
+        # Fallback: try ol-project meta
+        proj_meta = soup.find("meta", {"name": "ol-project"})
+        if proj_meta and proj_meta.get("content"):
+            proj = json.loads(proj_meta["content"])
+            root_folder = proj.get("rootFolder", [{}])
+            root_id = root_folder[0].get("_id", "") if root_folder else ""
+            entities = {}
+            if root_folder:
+                _walk_folder_entities(root_folder[0], "", entities)
+            return {"root_folder_id": root_id, "entities": entities}
+        raise RuntimeError("Could not extract project data from page.")
+
+    root_folder_data = json.loads(root_meta["content"])
+    root_id = root_folder_data[0]["_id"] if root_folder_data else ""
+    entities = {}
+    if root_folder_data:
+        _walk_folder_entities(root_folder_data[0], "", entities)
+    return {"root_folder_id": root_id, "entities": entities}
+
+
+def _walk_folder_entities(folder: dict, prefix: str, entities: dict):
+    """Walk folder tree and build flat entity map."""
+    folder_id = folder.get("_id", "")
+    for doc in folder.get("docs", []):
+        path = f"{prefix}{doc['name']}" if prefix else doc["name"]
+        entities[path] = {"id": doc["_id"], "type": "doc", "folder_id": folder_id}
+    for f in folder.get("fileRefs", []):
+        path = f"{prefix}{f['name']}" if prefix else f["name"]
+        entities[path] = {"id": f["_id"], "type": "file", "folder_id": folder_id}
+    for sub in folder.get("folders", []):
+        sub_prefix = f"{prefix}{sub['name']}/"
+        _walk_folder_entities(sub, sub_prefix, entities)
+
+
 def download_project_zip(client: OverleafClient, project_id: str) -> bytes:
     """Download entire project as a zip file."""
     resp = client.get(f"/project/{project_id}/download/zip", timeout=60)

@@ -22,9 +22,12 @@ class SocketIOClient:
 
     def connect(self, project_id: str):
         """Handshake + WebSocket connect for a project."""
+        self._project_id = project_id
+
         # Step 1: HTTP handshake to get session id
+        # Note: projectId is NOT in the handshake URL, only in the WebSocket URL
         t = int(time.time() * 1000)
-        hs_url = f"{self.base_url}/socket.io/1/?projectId={project_id}&t={t}"
+        hs_url = f"{self.base_url}/socket.io/1/?t={t}"
         resp = requests.get(
             hs_url,
             cookies={COOKIE_NAME: self.cookie_value},
@@ -38,7 +41,7 @@ class SocketIOClient:
         # Step 2: WebSocket upgrade
         ws_scheme = "wss" if self.base_url.startswith("https") else "ws"
         ws_host = self.base_url.replace("https://", "").replace("http://", "")
-        ws_url = f"{ws_scheme}://{ws_host}/socket.io/1/websocket/{self.sid}?projectId={project_id}"
+        ws_url = f"{ws_scheme}://{ws_host}/socket.io/1/websocket/{self.sid}"
         self.ws = websocket.create_connection(
             ws_url,
             cookie=f"{COOKIE_NAME}={self.cookie_value}",
