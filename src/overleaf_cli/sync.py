@@ -8,6 +8,7 @@ import click
 
 from overleaf_cli.client import OverleafClient
 from overleaf_cli.manifest import Manifest, hash_file, hash_content
+from overleaf_cli.ignore import load_patterns, is_ignored
 from overleaf_cli.project import (
     download_project_zip,
     upload_file,
@@ -50,13 +51,20 @@ def clone_project(client: OverleafClient, cookie_value: str,
     zip_data = download_project_zip(client, project_id)
     files = _extract_zip(zip_data)
 
+    patterns = load_patterns(target_dir)
+    skipped = 0
     for rel_path, data in files.items():
+        if is_ignored(rel_path, patterns):
+            skipped += 1
+            continue
         local_path = target_dir / rel_path
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(data)
         manifest.set_file(rel_path, "", _guess_type(rel_path), hash_content(data))
         click.echo(f"  {rel_path}")
 
+    if skipped:
+        click.echo(f"  ({skipped} files skipped by ignore rules)")
     manifest.save()
 
 
@@ -118,7 +126,10 @@ def pull(client: OverleafClient, cookie_value: str, manifest: Manifest):
 def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
     """Push local changes to remote via REST upload."""
     project_id = manifest.project_id
-    added, modified, deleted = manifest.get_local_changes()
+    patterns = load_patterns(manifest.project_dir)
+    added, modified, deleted = manifest.get_local_changes(
+        ignore_fn=lambda p: is_ignored(p, patterns)
+    )
 
     if not added and not modified and not deleted:
         click.echo("Nothing to push.")
@@ -184,7 +195,10 @@ def _ensure_folders(client: OverleafClient, project_id: str,
 
 def status(cookie_value: str, manifest: Manifest):
     """Show local changes (fast, no network). Use pull to check remote."""
-    added, modified, deleted = manifest.get_local_changes()
+    patterns = load_patterns(manifest.project_dir)
+    added, modified, deleted = manifest.get_local_changes(
+        ignore_fn=lambda p: is_ignored(p, patterns)
+    )
 
     if added or modified or deleted:
         click.echo("Local changes:")
