@@ -26,6 +26,24 @@ def test_default_patterns_ignore_aux():
     assert is_ignored("main.@bstract", DEFAULT_PATTERNS)
 
 
+def test_default_patterns_ignore_minitoc():
+    assert is_ignored("main.maf", DEFAULT_PATTERNS)
+    assert is_ignored("main.mtc", DEFAULT_PATTERNS)
+    assert is_ignored("main.mtc0", DEFAULT_PATTERNS)
+    assert is_ignored("main.mtc1", DEFAULT_PATTERNS)
+
+
+def test_default_patterns_ignore_archives():
+    assert is_ignored("source.tar.gz", DEFAULT_PATTERNS)
+    assert is_ignored("backup.zip", DEFAULT_PATTERNS)
+    assert is_ignored("data.tar", DEFAULT_PATTERNS)
+    assert is_ignored("old.rar", DEFAULT_PATTERNS)
+
+
+def test_default_patterns_ignore_overleaf_metadata():
+    assert is_ignored("00README.json", DEFAULT_PATTERNS)
+
+
 def test_default_patterns_allow_tex():
     assert not is_ignored("main.tex", DEFAULT_PATTERNS)
     assert not is_ignored("chapters/intro.tex", DEFAULT_PATTERNS)
