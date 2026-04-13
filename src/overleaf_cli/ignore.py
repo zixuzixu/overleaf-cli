@@ -45,6 +45,29 @@ DEFAULT_PATTERNS = [
     "*.ps",
     "*-blx.bib",
     "*.@bstract",
+    # minitoc intermediate files
+    "*.maf",
+    "*.mtc",
+    "*.mtc0",
+    "*.mtc1",
+    "*.mtc2",
+    "*.mtc3",
+    "*.mlf",
+    "*.mlt",
+    # Archive / compressed files
+    "*.tar.gz",
+    "*.tar",
+    "*.zip",
+    "*.rar",
+    "*.7z",
+    # Overleaf internal metadata
+    "00README.json",
+    # Common non-LaTeX files
+    "*.pyc",
+    "*.DS_Store",
+    ".git/",
+    ".gitignore",
+    "__pycache__/",
     # Overleaf internal
     ".overleaf/",
 ]
