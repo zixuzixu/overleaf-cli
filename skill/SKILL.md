@@ -72,6 +72,18 @@ overleaf push     # push back
 Compile artifacts (*.pdf, *.aux, *.log, etc.) are auto-ignored. No need to filter manually.
 Custom rules: create `.overleafignore` in project root.
 
+**Negation patterns** (like .gitignore): prefix with `!` to un-ignore files matching a default rule.
+This is essential for PDF figures, since `*.pdf` is auto-ignored but `figures/*.pdf` should be uploaded.
+
+```
+# .overleafignore example
+notes/
+review/
+*.md
+# Un-ignore PDF figures (overrides the default *.pdf ignore)
+!figures/*.pdf
+```
+
 ## Auth Notes
 
 - **Cookie auth** (login/projects/clone/create/pull): stored in `~/.config/overleaf-cli/session.json`
