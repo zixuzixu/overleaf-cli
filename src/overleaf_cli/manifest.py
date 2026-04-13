@@ -79,9 +79,10 @@ class Manifest:
     def all_files(self) -> dict[str, dict]:
         return self.data.get("files", {})
 
-    def get_local_changes(self) -> tuple[list[str], list[str], list[str]]:
+    def get_local_changes(self, ignore_fn=None) -> tuple[list[str], list[str], list[str]]:
         """Compare local files against manifest.
         Returns (added, modified, deleted) relative paths.
+        ignore_fn: optional callable(rel_path) -> bool, to skip ignored files.
         """
         added, modified, deleted = [], [], []
         manifest_files = set(self.all_files().keys())
@@ -93,6 +94,8 @@ class Manifest:
             rel = str(path.relative_to(self.project_dir))
             if rel.startswith(MANIFEST_DIR):
                 continue
+            if ignore_fn and ignore_fn(rel):
+                continue
             local_files.add(rel)
             entry = self.get_file(rel)
             if entry is None:
@@ -101,6 +104,8 @@ class Manifest:
                 modified.append(rel)
 
         for rel in manifest_files - local_files:
+            if ignore_fn and ignore_fn(rel):
+                continue
             deleted.append(rel)
 
         return sorted(added), sorted(modified), sorted(deleted)
