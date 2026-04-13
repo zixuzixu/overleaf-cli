@@ -11,12 +11,7 @@ from overleaf_cli.manifest import Manifest, hash_file, hash_content
 from overleaf_cli.ignore import load_patterns, is_ignored
 from overleaf_cli.project import (
     create_project_from_zip,
-    delete_project,
     download_project_zip,
-    upload_file,
-    create_folder,
-    delete_entity,
-    get_project_data,
 )
 
 # Text file extensions treated as "doc" type
@@ -126,13 +121,16 @@ def pull(client: OverleafClient, cookie_value: str, manifest: Manifest):
 
 
 def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
-    """Push local changes by re-creating the project from zip.
+    """Push local changes via Overleaf git bridge.
 
-    Overleaf's CDN blocks WebSocket, so we can't update files individually.
-    Instead: delete old project → re-create from zip → update manifest.
+    Uses git clone → copy changes → git push. Non-destructive: preserves
+    project URL, history, and collaborator access.
     """
+    import shutil
+    import subprocess
+    import tempfile
+
     project_id = manifest.project_id
-    project_name = manifest.data.get("project_name", "Untitled")
     base_url = manifest.base_url
     patterns = load_patterns(manifest.project_dir)
     added, modified, deleted = manifest.get_local_changes(
@@ -145,8 +143,99 @@ def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
 
     click.echo(f"Changes: {len(added)} added, {len(modified)} modified, {len(deleted)} deleted")
 
-    # Collect all current local files (non-ignored)
-    files_to_upload = []
+    # Get git credentials
+    from overleaf_cli.config import load_git_auth, save_git_auth
+    git_auth = load_git_auth()
+    if not git_auth:
+        click.echo(
+            "\nGit bridge token required for push.\n"
+            "Get your token at: https://www.overleaf.com/user/settings\n"
+            "  → 'Git Integration' section → 'Generate token'\n"
+        )
+        token = click.prompt("Git authentication token", hide_input=True)
+        save_git_auth("git", token)
+        git_auth = {"email": "git", "token": token}
+
+    from urllib.parse import quote
+    token_encoded = quote(git_auth["token"], safe="")
+    git_url = f"https://git:{token_encoded}@git.overleaf.com/{project_id}"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir) / "repo"
+
+        # Clone current state from Overleaf
+        click.echo("  Cloning from Overleaf git...")
+        r = subprocess.run(
+            ["git", "clone", git_url, str(tmp)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            err = r.stderr.strip()
+            if "Authentication failed" in err or "403" in err:
+                click.echo("  Git authentication failed. Check your email and token.")
+                click.echo("  Re-run 'overleaf push' to enter new credentials.")
+                from overleaf_cli.config import load_session
+                session = load_session()
+                if session:
+                    session.pop("git_email", None)
+                    session.pop("git_token", None)
+                    from overleaf_cli.config import SESSION_FILE
+                    import json
+                    SESSION_FILE.write_text(json.dumps(session, indent=2))
+                raise click.ClickException("Git authentication failed.")
+            raise click.ClickException(f"Git clone failed: {err}")
+
+        # Apply local changes to the git working tree
+        # Remove all tracked files first (to handle deletions)
+        for item in tmp.iterdir():
+            if item.name == ".git":
+                continue
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+        # Copy all local non-ignored files
+        for path in sorted(manifest.project_dir.rglob("*")):
+            if path.is_dir():
+                continue
+            rel = str(path.relative_to(manifest.project_dir))
+            if rel.startswith(".overleaf") or rel.startswith("."):
+                continue
+            if is_ignored(rel, patterns):
+                continue
+            dest = tmp / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
+
+        # Git add, commit, push
+        subprocess.run(["git", "add", "-A"], cwd=tmp, capture_output=True, timeout=30)
+
+        # Check if there are actual changes to commit
+        r = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=tmp,
+            capture_output=True, text=True, timeout=10,
+        )
+        if not r.stdout.strip():
+            click.echo("  No changes detected by git (remote already up to date).")
+            manifest.save()
+            return
+
+        subprocess.run(
+            ["git", "commit", "-m", "Update from overleaf-cli"],
+            cwd=tmp, capture_output=True, text=True, timeout=30,
+        )
+
+        click.echo("  Pushing to Overleaf...")
+        r = subprocess.run(
+            ["git", "push"], cwd=tmp,
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode != 0:
+            raise click.ClickException(f"Git push failed: {r.stderr.strip()}")
+
+    # Update manifest with current file hashes
+    manifest.data["files"] = {}
     for path in sorted(manifest.project_dir.rglob("*")):
         if path.is_dir():
             continue
@@ -155,32 +244,16 @@ def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
             continue
         if is_ignored(rel, patterns):
             continue
-        files_to_upload.append((rel, path))
-
-    # Create zip
-    click.echo(f"  Packing {len(files_to_upload)} files...")
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for rel, path in files_to_upload:
-            zf.write(path, rel)
-    zip_data = zip_buf.getvalue()
-
-    # Delete old project
-    click.echo(f"  Replacing project on Overleaf...")
-    delete_project(client, project_id)
-
-    # Re-create from zip
-    new_project_id = create_project_from_zip(client, project_name, zip_data)
-
-    # Update manifest
-    manifest.data["project_id"] = new_project_id
-    manifest.data["files"] = {}
-    for rel, path in files_to_upload:
         manifest.set_file(rel, "", _guess_type(rel), hash_file(path))
 
     manifest.save()
-    click.echo(f"  Project re-created: {new_project_id}")
-    click.echo(f"  View at: {base_url}/project/{new_project_id}")
+    for p in added:
+        click.echo(f"  + {p}")
+    for p in modified:
+        click.echo(f"  M {p}")
+    for p in deleted:
+        click.echo(f"  - {p}")
+    click.echo(f"\nPushed to: {base_url}/project/{project_id}")
 
 
 def status(cookie_value: str, manifest: Manifest):

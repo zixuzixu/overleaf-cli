@@ -37,3 +37,26 @@ def clear_session():
     """Remove saved session."""
     if SESSION_FILE.exists():
         SESSION_FILE.unlink()
+
+
+def load_git_auth() -> dict | None:
+    """Load git credentials (email + token) for Overleaf git bridge."""
+    session = load_session()
+    if not session:
+        return None
+    email = session.get("git_email")
+    token = session.get("git_token")
+    if email and token:
+        return {"email": email, "token": token}
+    return None
+
+
+def save_git_auth(email: str, token: str):
+    """Save git credentials alongside the session."""
+    session = load_session()
+    if not session:
+        raise RuntimeError("No session found. Run 'overleaf login' first.")
+    session["git_email"] = email
+    session["git_token"] = token
+    ensure_config_dir()
+    SESSION_FILE.write_text(json.dumps(session, indent=2))
