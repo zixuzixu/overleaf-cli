@@ -1,6 +1,6 @@
 [project]
 name = "overleaf-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "CLI tool for bidirectional sync with Overleaf"
 requires-python = ">=3.10"
 dependencies = [
