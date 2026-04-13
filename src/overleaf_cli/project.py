@@ -73,6 +73,41 @@ def _walk_folder_entities(folder: dict, prefix: str, entities: dict):
         _walk_folder_entities(sub, sub_prefix, entities)
 
 
+def create_project_from_zip(client: OverleafClient, project_name: str,
+                            zip_data: bytes) -> str:
+    """Create a new project on Overleaf by uploading a zip file.
+    Returns the project ID.
+    """
+    # Need CSRF token from the dashboard page
+    resp = client.session.get(client.base_url + "/project", timeout=15)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    meta = soup.find("meta", {"name": "ol-csrfToken"})
+    if not meta or not meta.get("content"):
+        raise RuntimeError("Could not get CSRF token for project creation.")
+    csrf = meta["content"]
+
+    resp = client.session.post(
+        client.base_url + "/project/new/upload",
+        headers={"x-csrf-token": csrf},
+        files={"qqfile": (f"{project_name}.zip", zip_data, "application/zip")},
+        data={
+            "name": project_name,
+            "relativePath": "null",
+            "type": "application/zip",
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("success"):
+        raise RuntimeError(f"Project creation failed: {data}")
+    project_id = data.get("project_id", "")
+    if not project_id:
+        raise RuntimeError(f"No project_id in response: {data}")
+    return project_id
+
+
 def download_project_zip(client: OverleafClient, project_id: str) -> bytes:
     """Download entire project as a zip file."""
     resp = client.get(f"/project/{project_id}/download/zip", timeout=60)

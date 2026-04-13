@@ -9,7 +9,7 @@ from overleaf_cli.client import OverleafClient
 from overleaf_cli.config import DEFAULT_BASE_URL, load_session, clear_session
 from overleaf_cli.manifest import Manifest
 from overleaf_cli.project import list_projects
-from overleaf_cli.sync import clone_project, pull, push, status
+from overleaf_cli.sync import clone_project, pull, push, status, init_project, create_and_upload
 
 
 @click.group()
@@ -48,6 +48,36 @@ def projects():
     click.echo("-" * 93)
     for p in projs:
         click.echo(f"{p['id']:<28} {p['name']:<40} {p['lastUpdated']:<25}")
+
+
+@main.command()
+@click.argument("project_id")
+def init(project_id):
+    """Link current directory to an existing Overleaf project."""
+    session = load_session()
+    base_url = session.get("base_url", DEFAULT_BASE_URL) if session else DEFAULT_BASE_URL
+    cookie = get_cookie(base_url)
+    client = OverleafClient(cookie, base_url)
+
+    # Look up project name
+    projs = list_projects(client)
+    match = [p for p in projs if p["id"] == project_id]
+    name = match[0]["name"] if match else project_id
+
+    click.echo(f"Linking to project '{name}' ({project_id})...")
+    init_project(project_id, name, base_url, Path.cwd())
+
+
+@main.command()
+@click.argument("name")
+def create(name):
+    """Create a new Overleaf project and upload current directory."""
+    session = load_session()
+    base_url = session.get("base_url", DEFAULT_BASE_URL) if session else DEFAULT_BASE_URL
+    cookie = get_cookie(base_url)
+    client = OverleafClient(cookie, base_url)
+
+    create_and_upload(client, cookie, name, base_url, Path.cwd())
 
 
 @main.command()
