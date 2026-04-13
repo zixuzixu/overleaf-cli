@@ -1,6 +1,6 @@
 # overleaf-cli
 
-A Python CLI tool for bidirectional sync with [Overleaf](https://www.overleaf.com). Pull, push, and manage your LaTeX projects from the terminal.
+A Python CLI tool for bidirectional sync with [Overleaf](https://www.overleaf.com). Create, clone, pull, push, and manage your LaTeX projects from the terminal.
 
 ## Install
 
@@ -25,49 +25,81 @@ overleaf login
 # 2. List your projects
 overleaf projects
 
-# 3. Clone a project
+# 3. Clone an existing project
 overleaf clone <project_id>
 
-# 4. Work locally, then sync
-cd <project_dir>
+# 4. Or create a new project from local files
+cd my-latex-project/
+overleaf create "My Paper"
+
+# 5. Work locally, then sync
 overleaf status    # see what changed
 overleaf pull      # pull remote changes
-overleaf push      # push local changes
+overleaf push      # push local changes (via git bridge)
 ```
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `overleaf login` | Authenticate with Overleaf |
+| `overleaf login` | Authenticate with Overleaf (cookie extraction or manual paste) |
 | `overleaf logout` | Clear saved session |
 | `overleaf projects` | List all your projects |
 | `overleaf clone <id>` | Download project to local directory |
+| `overleaf create <name>` | Create new Overleaf project from current directory |
+| `overleaf init <id>` | Link current directory to an existing project |
 | `overleaf pull` | Pull remote changes (run inside project dir) |
-| `overleaf push` | Push local changes to Overleaf |
-| `overleaf status` | Show local and remote changes |
+| `overleaf push` | Push local changes via git bridge |
+| `overleaf status` | Show local changes |
+| `overleaf install` | Install AI agent skill for Claude Code / Cursor |
 
 ## Authentication
 
-Overleaf does not provide a public API. This tool uses the `overleaf_session2` cookie for authentication.
+Overleaf does not provide a public API. This tool uses two auth mechanisms:
 
-**Automatic extraction** (recommended): The tool tries to extract the cookie from your Chrome or Firefox browser using `browser_cookie3`.
+**Cookie auth** (for clone, pull, create, projects):
+- Automatic: extracts `overleaf_session2` from Chrome/Firefox via `browser_cookie3`
+- Manual: paste cookie value from DevTools → Application → Cookies
+- Saved to `~/.config/overleaf-cli/session.json`
 
-**Manual input** (fallback): If automatic extraction fails:
-1. Open https://www.overleaf.com and log in
-2. Open DevTools (F12) → Application → Cookies → overleaf.com
-3. Copy the value of `overleaf_session2`
-4. Run `overleaf login` and paste the value
+**Git token** (for push):
+- Generate at https://www.overleaf.com/user/settings → Git Integration
+- First `overleaf push` will prompt for the token, then saves it locally
 
-Session is saved to `~/.config/overleaf-cli/session.json`.
+## Ignore Rules
+
+Files matching `.overleafignore` patterns (or built-in defaults) are skipped during sync.
+
+**Built-in defaults** skip LaTeX compile artifacts: `*.pdf`, `*.aux`, `*.log`, `*.toc`, `*.out`, `*.fls`, `*.fdb_latexmk`, `*.synctex.gz`, `*.bbl`, `*.blg`, `*.nav`, `*.snm`, `*.maf`, `*.mtc*`, archives (`*.tar.gz`, `*.zip`), and Overleaf metadata (`00README.json`).
+
+**Custom rules**: create `.overleafignore` in your project root:
+```
+# Skip data files
+data/
+*.csv
+# Keep specific PDFs (add to .overleafignore with ! negation... not yet supported)
+```
 
 ## How Sync Works
 
-Each cloned project has a `.overleaf/manifest.json` that tracks file hashes. Sync works by comparing local file hashes against the manifest:
+Each project has a `.overleaf/manifest.json` tracking file hashes.
 
-- **pull**: Fetches the remote file tree, downloads files that changed remotely, updates manifest
-- **push**: Scans local files for changes vs manifest, uploads changed files, updates manifest
-- **Conflicts**: If the same file changed on both sides, the local version is saved as `<file>.local` and the remote version is downloaded
+- **clone/pull**: Downloads project zip, compares hashes, updates changed files
+- **push**: Uses Overleaf git bridge (`git.overleaf.com`) for non-destructive updates. Project URL, history, and collaborators are preserved.
+- **create**: Zips local files and uploads via `/project/new/upload` endpoint
+- **Conflicts** (pull): If both sides changed a file, local version is saved as `<file>.local`
+
+## AI Agent Integration
+
+Install the overleaf-cli skill so your AI coding agent (Claude Code, Cursor, etc.) can manage Overleaf projects:
+
+```bash
+overleaf install
+```
+
+This copies a skill definition to `~/.claude/skills/overleaf-cli/SKILL.md`. The agent can then use overleaf commands as part of its workflow (e.g., compile LaTeX locally then push to Overleaf).
+
+See [AGENT.md](AGENT.md) for the full agent-facing documentation.
 
 ## Development
 
@@ -80,10 +112,10 @@ uv run pytest tests/ -v
 
 ## Limitations
 
-- **No official API**: All endpoints are reverse-engineered and may change without notice
-- **Cookie expiration**: The session cookie expires periodically; re-run `overleaf login` when it does
-- **Socket.IO v1**: Reading `.tex` file content requires a Socket.IO v1 WebSocket connection, which is the most fragile part
-- **No auto-merge**: Conflicts are reported, not automatically resolved
+- **No official API**: All endpoints are reverse-engineered and may change
+- **Cookie expiration**: Session cookie expires periodically, re-run `overleaf login`
+- **Push requires git token**: Overleaf premium feature (git bridge)
+- **No auto-merge**: Conflicts are reported, not resolved
 
 ## License
 
