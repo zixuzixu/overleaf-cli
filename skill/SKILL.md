@@ -27,6 +27,24 @@ overleaf pull                   # pull remote changes
 overleaf push                   # push via git bridge (preserves URL + collaborators)
 ```
 
+## What Gets Uploaded (Whitelist Strategy)
+
+By default, only essential LaTeX files are uploaded:
+
+- **LaTeX source**: `.tex`, `.bib`, `.bst`, `.cls`, `.sty`, `.dtx`, `.ins`, `.ltx`, `.def`, `.cfg`, `.fd`
+- **Figures**: `.pdf`, `.png`, `.jpg`, `.jpeg`, `.eps`, `.svg`, `.tikz` (in any subdirectory)
+- **Data**: `.csv`, `.dat`
+- **Fonts**: `.ttf`, `.otf`, `.woff`, `.pfb`, `.afm`, `.tfm`, etc.
+
+**Automatically excluded**:
+- Compile artifacts: `*.aux`, `*.log`, `*.out`, `*.bbl`, `*.fls`, etc.
+- Compile-output PDFs: any `.pdf` with a matching `.tex` sibling (e.g. `main.pdf` next to `main.tex`)
+- Non-LaTeX files: `*.py`, `*.json`, `*.md`, `*.yaml`, `*.sh`, `*.toml`
+- Archives: `*.tar.gz`, `*.zip`, etc.
+- System junk: `.git/`, `__pycache__/`, `.DS_Store`
+
+No `.overleafignore` needed for typical projects — the defaults handle it.
+
 ## Workflow: Push LaTeX to Overleaf
 
 When the user asks to "put this on Overleaf", "upload to Overleaf", or "create Overleaf project":
@@ -67,10 +85,20 @@ overleaf pull     # get latest changes from collaborators
 overleaf push     # push back
 ```
 
-## Ignore Rules
+## Custom Ignore Rules (.overleafignore)
 
-Compile artifacts (*.pdf, *.aux, *.log, etc.) are auto-ignored. No need to filter manually.
-Custom rules: create `.overleafignore` in project root.
+Create `.overleafignore` in project root for additional rules (gitignore syntax):
+
+```
+# Exclude extra files
+drafts/
+old_versions/
+
+# Force-include a non-standard file type
+!data/*.xlsx
+```
+
+**Negation patterns** (`!`): override both default and custom ignore rules.
 
 ## Auth Notes
 

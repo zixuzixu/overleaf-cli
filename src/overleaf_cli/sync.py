@@ -51,7 +51,7 @@ def clone_project(client: OverleafClient, cookie_value: str,
     patterns = load_patterns(target_dir)
     skipped = 0
     for rel_path, data in files.items():
-        if is_ignored(rel_path, patterns):
+        if is_ignored(rel_path, patterns, project_dir=target_dir):
             skipped += 1
             continue
         local_path = target_dir / rel_path
@@ -134,7 +134,7 @@ def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
     base_url = manifest.base_url
     patterns = load_patterns(manifest.project_dir)
     added, modified, deleted = manifest.get_local_changes(
-        ignore_fn=lambda p: is_ignored(p, patterns)
+        ignore_fn=lambda p: is_ignored(p, patterns, project_dir=manifest.project_dir)
     )
 
     if not added and not modified and not deleted:
@@ -202,7 +202,7 @@ def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
             rel = str(path.relative_to(manifest.project_dir))
             if rel.startswith(".overleaf") or rel.startswith("."):
                 continue
-            if is_ignored(rel, patterns):
+            if is_ignored(rel, patterns, project_dir=manifest.project_dir):
                 continue
             dest = tmp / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -242,7 +242,7 @@ def push(client: OverleafClient, cookie_value: str, manifest: Manifest):
         rel = str(path.relative_to(manifest.project_dir))
         if rel.startswith(".overleaf") or rel.startswith("."):
             continue
-        if is_ignored(rel, patterns):
+        if is_ignored(rel, patterns, project_dir=manifest.project_dir):
             continue
         manifest.set_file(rel, "", _guess_type(rel), hash_file(path))
 
@@ -260,7 +260,7 @@ def status(cookie_value: str, manifest: Manifest):
     """Show local changes (fast, no network). Use pull to check remote."""
     patterns = load_patterns(manifest.project_dir)
     added, modified, deleted = manifest.get_local_changes(
-        ignore_fn=lambda p: is_ignored(p, patterns)
+        ignore_fn=lambda p: is_ignored(p, patterns, project_dir=manifest.project_dir)
     )
 
     if added or modified or deleted:
@@ -298,7 +298,7 @@ def init_project(project_id: str, project_name: str, base_url: str,
         rel = str(path.relative_to(project_dir))
         if rel.startswith(".overleaf"):
             continue
-        if is_ignored(rel, patterns):
+        if is_ignored(rel, patterns, project_dir=manifest.project_dir):
             continue
         manifest.set_file(rel, "", _guess_type(rel), hash_file(path))
         click.echo(f"  {rel}")
@@ -328,7 +328,7 @@ def create_and_upload(client: OverleafClient, cookie_value: str,
         rel = str(path.relative_to(project_dir))
         if rel.startswith(".overleaf") or rel.startswith("."):
             continue
-        if is_ignored(rel, patterns):
+        if is_ignored(rel, patterns, project_dir=manifest.project_dir):
             continue
         files_to_upload.append((rel, path))
 

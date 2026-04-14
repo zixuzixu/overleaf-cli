@@ -83,14 +83,42 @@ def test_custom_patterns_from_file(tmp_path):
 
 
 def test_load_patterns_no_file(tmp_path):
-    patterns = load_patterns(tmp_path)
-    assert patterns == DEFAULT_PATTERNS
+    ignore, negate = load_patterns(tmp_path)
+    assert ignore == DEFAULT_PATTERNS
+    assert negate == []
 
 
-def test_negation_not_supported():
-    """Negation (!) is not supported — patterns starting with ! are just patterns."""
-    patterns = ["*.pdf"]
+def test_negation_unignores_matching_files():
+    """Negation (!) un-ignores files that match a default ignore rule."""
+    patterns = (["*.pdf"], ["figures/*.pdf"])
     assert is_ignored("main.pdf", patterns)
+    assert not is_ignored("figures/diagram.pdf", patterns)
+    assert is_ignored("output/thesis.pdf", patterns)
+
+
+def test_negation_with_filename_pattern():
+    """Negation with a bare filename pattern."""
+    patterns = (["*.log"], ["important.log"])
+    assert is_ignored("build.log", patterns)
+    assert not is_ignored("important.log", patterns)
+
+
+def test_negation_with_directory_pattern():
+    """Negation with a directory pattern un-ignores files in that directory."""
+    patterns = (["drafts/"], ["drafts/"])
+    assert not is_ignored("drafts/paper.tex", patterns)
+
+
+def test_load_patterns_with_negation(tmp_path):
+    ignore_file = tmp_path / ".overleafignore"
+    ignore_file.write_text("*.backup\n!important.backup\nold_stuff/\n")
+
+    ignore, negate = load_patterns(tmp_path)
+    assert "*.backup" in ignore
+    assert "old_stuff/" in ignore
+    assert "important.backup" in negate
+    # defaults still present
+    assert "*.pdf" in ignore
 
 
 def test_nested_path_matching():
