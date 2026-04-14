@@ -158,6 +158,35 @@ def status_cmd():
 
 
 @main.command()
+@click.option("--write", "-w", is_flag=True, help="Write .overleafignore (default: dry-run)")
+@click.option("--root", "-r", default="main.tex", help="Root tex file (default: main.tex)")
+def deps(write, root):
+    """Scan tex dependencies and generate .overleafignore."""
+    from overleaf_cli.ignore import scan_tex_deps, generate_overleafignore, IGNORE_FILE
+
+    project_dir = Path.cwd()
+    found = scan_tex_deps(project_dir, root)
+
+    if not found:
+        raise click.ClickException(
+            f"No dependencies found. Is '{root}' in the current directory?"
+        )
+
+    click.echo(f"Found {len(found)} required files from '{root}':")
+    for f in sorted(found):
+        click.echo(f"  {f}")
+
+    content = generate_overleafignore(project_dir, root)
+
+    if write:
+        (project_dir / IGNORE_FILE).write_text(content)
+        click.echo(f"\nWrote {IGNORE_FILE}")
+    else:
+        click.echo(f"\n--- {IGNORE_FILE} (dry-run, use --write to save) ---")
+        click.echo(content)
+
+
+@main.command()
 def install():
     """Install AI agent skill for Claude Code / Cursor."""
     from overleaf_cli.skill_content import SKILL_MD

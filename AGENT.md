@@ -4,7 +4,7 @@ This document describes how AI coding agents (Claude Code, Cursor, Copilot, etc.
 
 ## Overview
 
-overleaf-cli syncs LaTeX projects between local filesystem and Overleaf (overleaf.com). It uses a **whitelist strategy**: only essential LaTeX files are uploaded by default. No manual filtering needed.
+overleaf-cli syncs LaTeX projects between local filesystem and Overleaf (overleaf.com). It uses **dependency-based whitelisting**: scan the root tex file's dependencies, generate a `.overleafignore`, and upload only what's needed.
 
 ## Prerequisites
 
@@ -14,65 +14,28 @@ overleaf-cli syncs LaTeX projects between local filesystem and Overleaf (overlea
 
 ## Commands Reference
 
-### Authentication
-
 ```bash
-overleaf login     # Interactive: extracts browser cookie or prompts for manual input
-overleaf logout    # Clears saved session
+overleaf login                  # authenticate
+overleaf logout                 # clear session
+overleaf projects               # list all projects (ID, name, date)
+overleaf create "Project Name"  # create new project from current dir
+overleaf clone <project_id>     # download project to local dir
+overleaf init <project_id>      # link current dir to existing project
+overleaf status                 # show local changes (no network, fast)
+overleaf pull                   # download remote changes
+overleaf push                   # upload local changes via git bridge
+overleaf deps                   # scan tex deps, preview .overleafignore
+overleaf deps --write           # scan and write .overleafignore
+overleaf deps -r paper.tex      # use different root tex file
 ```
 
-Check if logged in: `overleaf projects` succeeds → logged in. Fails → needs login.
+## Critical Rule: Always Run `overleaf deps --write` Before Upload
 
-### Project Management
+**Every time before `overleaf create` or `overleaf push`, run `overleaf deps --write` first.**
 
-```bash
-# List all projects (shows ID, name, last updated)
-overleaf projects
+This scans the root tex file (`main.tex` by default) and generates a precise `.overleafignore` that only includes files actually referenced via `\input`, `\usepackage`, `\bibliography`, `\includegraphics`, etc.
 
-# Create new project from current directory
-# Only uploads essential LaTeX files (see "What Gets Uploaded" below)
-overleaf create "Project Name"
-
-# Clone existing project to local directory
-overleaf clone <project_id>
-overleaf clone <project_id> --name custom_dir_name
-
-# Link current directory to existing project (no download)
-overleaf init <project_id>
-```
-
-### Sync Operations
-
-```bash
-# Show local changes vs last sync (no network, fast)
-overleaf status
-
-# Download remote changes
-overleaf pull
-
-# Upload local changes via git bridge
-# First push prompts for git token, subsequent pushes use saved token
-overleaf push
-```
-
-## What Gets Uploaded (Whitelist Strategy)
-
-The CLI uses a whitelist-first approach. Only files with recognized LaTeX extensions are uploaded:
-
-**Included by default:**
-- LaTeX source: `.tex`, `.bib`, `.bst`, `.cls`, `.sty`, `.dtx`, `.ins`, `.ltx`, `.def`, `.cfg`, `.fd`
-- Figures: `.pdf`, `.png`, `.jpg`, `.jpeg`, `.eps`, `.svg`, `.tikz`
-- Data: `.csv`, `.dat`
-- Fonts: `.ttf`, `.otf`, `.woff`, `.pfb`, `.afm`, `.tfm`, `.vf`, `.enc`, `.map`
-
-**Excluded by default:**
-- Compile artifacts: `*.aux`, `*.log`, `*.out`, `*.bbl`, `*.fls`, `*.synctex.gz`, etc.
-- Compile-output PDFs: any `.pdf` with a matching `.tex` sibling (e.g. `main.pdf` is skipped because `main.tex` exists, but `figures/plot.pdf` is uploaded)
-- Non-LaTeX files: `*.py`, `*.json`, `*.md`, `*.yaml`, `*.sh`, `*.toml`
-- Archives: `*.tar.gz`, `*.zip`, `*.rar`
-- System files: `.git/`, `__pycache__/`, `.DS_Store`
-
-**No `.overleafignore` is needed for typical LaTeX projects.** The defaults handle the common case correctly.
+Without it, any file with a LaTeX extension gets uploaded — including unused `.sty`, `.bst`, extra `.tex` files, and standard packages that Overleaf already provides.
 
 ## Typical Agent Workflows
 
@@ -80,86 +43,76 @@ The CLI uses a whitelist-first approach. Only files with recognized LaTeX extens
 
 ```bash
 cd /path/to/latex/project
-overleaf create "Paper Title"
-# Only essential files uploaded — no .py, .json, .md, etc.
+overleaf deps --write           # scan main.tex deps → .overleafignore
+overleaf create "Paper Title"   # upload only required files
 ```
 
-### Workflow 2: Edit existing Overleaf project
+### Workflow 2: Push changes after editing
+
+```bash
+cd <project_dir>
+overleaf deps --write           # refresh whitelist if deps changed
+overleaf push                   # upload changes
+```
+
+### Workflow 3: Clone and edit
 
 ```bash
 overleaf clone <project_id>
 cd <project_dir>
-# ... agent edits .tex files ...
+# ... edit .tex files ...
 overleaf push
 ```
 
-### Workflow 3: Compile locally, then sync
+### Workflow 4: Different root tex file
 
 ```bash
-cd <project_dir>
-# Agent writes/edits .tex files
-latexmk -pdf main.tex    # compile locally
-overleaf push             # only pushes source files, compile PDFs auto-excluded
+overleaf deps --write --root paper.tex   # if root is not main.tex
+overleaf create "Paper Title"
 ```
 
-### Workflow 4: Pull collaborator changes before editing
+## How Dependency Scanning Works
 
-```bash
-cd <project_dir>
-overleaf pull             # get latest from Overleaf
-# ... agent edits ...
-overleaf push
+`overleaf deps` starts from the root tex file and recursively follows:
+
+| LaTeX command | What it finds | File types |
+|---|---|---|
+| `\input{...}`, `\include{...}` | Included tex files (recursive) | `.tex` |
+| `\usepackage{...}` | Local style files only (skips standard packages) | `.sty` |
+| `\documentclass{...}` | Local class file | `.cls` |
+| `\bibliography{...}`, `\addbibresource{...}` | Bibliography databases | `.bib` |
+| `\bibliographystyle{...}` | Local bst file | `.bst` |
+| `\includegraphics{...}` | Figure files | `.pdf`, `.png`, `.jpg`, `.eps`, `.svg` |
+
+The generated `.overleafignore` uses whitelist mode (`*` to ignore all, then `!file` to un-ignore):
+
 ```
-
-## Custom Ignore Rules
-
-For non-standard needs, create `.overleafignore` in project root (gitignore syntax):
-
-```
-# Exclude specific directories
-drafts/
-old_versions/
-
-# Force-include a non-standard file type (negation pattern)
-!data/*.xlsx
+*
+!main.tex
+!math_commands.tex
+!references.bib
+!neurips_2024.sty
+!figures/
+!figures/plot.pdf
 ```
 
 ## Project State
 
-Each linked project has `.overleaf/manifest.json`:
-```json
-{
-  "project_id": "...",
-  "project_name": "...",
-  "base_url": "https://www.overleaf.com",
-  "last_sync": "...",
-  "files": {
-    "main.tex": {"type": "doc", "id": "", "hash": "sha256:..."},
-    "figures/fig1.pdf": {"type": "file", "id": "", "hash": "sha256:..."}
-  }
-}
-```
-
-The agent can read this to determine:
-- Whether a directory is an Overleaf project (`project_id` is non-empty)
-- Which files are tracked
-- When the last sync happened
+Each linked project has `.overleaf/manifest.json` — the agent can read `project_id` and `last_sync` from it. **Never edit this file directly.**
 
 ## Error Handling
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| "Not logged in" | No session cookie | Run `overleaf login` |
-| "Session expired" | Cookie expired | Run `overleaf login` again |
-| "Git authentication failed" | Bad git token | Run `overleaf push` again to re-enter token |
-| "Not in an Overleaf project" | No `.overleaf/manifest.json` | Run `overleaf clone` or `overleaf init` first |
-| "Already linked to project" | `.overleaf/` exists | Remove `.overleaf/` to re-init |
+| Error | Fix |
+|-------|-----|
+| "Not logged in" / "Session expired" | `overleaf login` |
+| "Git authentication failed" | Re-run `overleaf push`, enter new token |
+| "Not in an Overleaf project" | `overleaf clone <id>` or `overleaf init <id>` |
+| "No dependencies found" | Check root tex file exists, try `--root <file.tex>` |
 
 ## Notes for Agents
 
-1. **Never edit `.overleaf/manifest.json` directly.** The CLI manages it.
-2. **Always `overleaf pull` before editing** if the project has collaborators.
-3. **`overleaf status` is free** (no network). Use it to check before push.
-4. **Push uses git bridge**, which preserves project URL and collaborator access.
-5. **No need to create `.overleafignore`** for typical projects — defaults are correct.
-6. **Compile-output PDFs are auto-detected** — `main.pdf` is skipped when `main.tex` exists, but `figures/*.pdf` is uploaded.
+1. **Always `overleaf deps --write` before upload.** This is the single most important rule.
+2. **Never edit `.overleaf/manifest.json` directly.**
+3. **Always `overleaf pull` before editing** if the project has collaborators.
+4. **`overleaf status` is free** (no network). Use it to check before push.
+5. **Push uses git bridge**, preserving project URL and collaborator access.
