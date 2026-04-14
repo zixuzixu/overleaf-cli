@@ -50,32 +50,191 @@ _ALWAYS_IGNORE = [
     ".git/", ".gitignore", "__pycache__/", ".overleaf/",
 ]
 
-# Regex for \input, \include, \bibliography, \includegraphics, etc.
-_TEX_INCLUDE_RE = re.compile(
+# Regex patterns for LaTeX dependency scanning
+_TEX_FILE_REF_RE = re.compile(
     r"\\(?:input|include|bibliography|addbibresource|includegraphics"
     r"|lstinputlisting|verbatiminput)\s*(?:\[.*?\])?\s*\{([^}]+)\}"
 )
+_TEX_PACKAGE_RE = re.compile(
+    r"\\(?:usepackage|RequirePackage)\s*(?:\[.*?\])?\s*\{([^}]+)\}"
+)
+_TEX_CLASS_RE = re.compile(
+    r"\\documentclass\s*(?:\[.*?\])?\s*\{([^}]+)\}"
+)
+_TEX_BIBSTYLE_RE = re.compile(
+    r"\\bibliographystyle\s*\{([^}]+)\}"
+)
 
 
-def _scan_tex_deps(project_dir: Path) -> set[str]:
-    """Scan all .tex files for referenced files (figures, bibs, inputs).
+def scan_tex_deps(project_dir: Path, root_tex: str = "main.tex") -> set[str]:
+    """Scan tex files recursively to find all required files.
 
-    Returns a set of relative paths that are explicitly referenced.
+    Starting from root_tex, follows \\input/\\include chains and collects:
+    - .tex files (via \\input, \\include)
+    - .bib files (via \\bibliography, \\addbibresource)
+    - .sty files (via \\usepackage — only if local copy exists)
+    - .cls files (via \\documentclass — only if local copy exists)
+    - .bst files (via \\bibliographystyle — only if local copy exists)
+    - figure files (via \\includegraphics — resolved with common extensions)
+
+    Returns a set of relative paths that exist on disk.
     """
     deps: set[str] = set()
-    for tex_file in project_dir.rglob("*.tex"):
+    visited: set[str] = set()
+
+    def _resolve(ref: str, extensions: list[str]) -> str | None:
+        """Find a file matching ref, trying with given extensions."""
+        # Try exact path first
+        if (project_dir / ref).is_file():
+            return ref
+        # Try with extensions
+        for ext in extensions:
+            candidate = ref if ref.endswith(ext) else ref + ext
+            if (project_dir / candidate).is_file():
+                return candidate
+        return None
+
+    def _scan_file(tex_rel: str) -> None:
+        if tex_rel in visited:
+            return
+        visited.add(tex_rel)
+
+        tex_path = project_dir / tex_rel
+        if not tex_path.is_file():
+            return
+
+        deps.add(tex_rel)
+
         try:
-            content = tex_file.read_text(encoding="utf-8", errors="ignore")
+            content = tex_path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
-            continue
-        for match in _TEX_INCLUDE_RE.finditer(content):
+            return
+
+        # \input, \include → recurse into .tex files
+        for match in _TEX_FILE_REF_RE.finditer(content):
             ref = match.group(1).strip()
-            # Handle comma-separated (e.g. \bibliography{ref1,ref2})
-            for part in ref.split(","):
-                part = part.strip()
-                if part:
-                    deps.add(part)
+            cmd = content[match.start():match.start()+20]
+
+            if "includegraphics" in cmd:
+                # Figure: try common image extensions
+                resolved = _resolve(ref, [".pdf", ".png", ".jpg", ".jpeg",
+                                          ".eps", ".svg", ".tikz"])
+                if resolved:
+                    deps.add(resolved)
+            elif "bibliography" in cmd or "addbibresource" in cmd:
+                # Bibliography: comma-separated, .bib extension
+                for part in ref.split(","):
+                    part = part.strip()
+                    if part:
+                        resolved = _resolve(part, [".bib"])
+                        if resolved:
+                            deps.add(resolved)
+            else:
+                # \input, \include → .tex file, recurse
+                resolved = _resolve(ref, [".tex"])
+                if resolved:
+                    _scan_file(resolved)
+
+        # \usepackage → local .sty files only
+        for match in _TEX_PACKAGE_RE.finditer(content):
+            for pkg in match.group(1).split(","):
+                pkg = pkg.strip()
+                if pkg:
+                    resolved = _resolve(pkg, [".sty"])
+                    if resolved:
+                        deps.add(resolved)
+
+        # \documentclass → local .cls file
+        for match in _TEX_CLASS_RE.finditer(content):
+            cls = match.group(1).strip()
+            resolved = _resolve(cls, [".cls"])
+            if resolved:
+                deps.add(resolved)
+
+        # \bibliographystyle → local .bst file
+        for match in _TEX_BIBSTYLE_RE.finditer(content):
+            bst = match.group(1).strip()
+            resolved = _resolve(bst, [".bst"])
+            if resolved:
+                deps.add(resolved)
+
+    # Find root tex file
+    root_resolved = _resolve(root_tex, [".tex"])
+    if root_resolved:
+        _scan_file(root_resolved)
+    else:
+        # Fallback: scan all .tex files
+        for tex_file in project_dir.rglob("*.tex"):
+            rel = str(tex_file.relative_to(project_dir))
+            _scan_file(rel)
+
     return deps
+
+
+def generate_overleafignore(project_dir: Path, root_tex: str = "main.tex") -> str:
+    """Generate .overleafignore content based on tex dependency analysis.
+
+    Scans root_tex for all dependencies and creates a whitelist-mode
+    .overleafignore that only includes required files.
+    """
+    deps = scan_tex_deps(project_dir, root_tex)
+
+    # Group by type for readable output
+    tex_files = sorted(f for f in deps if f.endswith(".tex"))
+    bib_files = sorted(f for f in deps if f.endswith(".bib"))
+    style_files = sorted(f for f in deps
+                         if f.endswith((".sty", ".cls", ".bst")))
+    figure_files = sorted(f for f in deps
+                          if not f.endswith((".tex", ".bib", ".sty",
+                                            ".cls", ".bst")))
+
+    # Build .overleafignore with whitelist mode
+    lines = [
+        "# Auto-generated by: overleaf deps",
+        "# Whitelist mode: ignore everything, then un-ignore required files.",
+        "#",
+        "# To regenerate: overleaf deps --write",
+        "# To add files:  append !path/to/file below",
+        "",
+        "# Ignore everything by default",
+        "*",
+        "",
+    ]
+
+    if tex_files:
+        lines.append("# LaTeX source")
+        for f in tex_files:
+            lines.append(f"!{f}")
+        lines.append("")
+
+    if bib_files:
+        lines.append("# Bibliography")
+        for f in bib_files:
+            lines.append(f"!{f}")
+        lines.append("")
+
+    if style_files:
+        lines.append("# Style/class files (local, not on Overleaf)")
+        for f in style_files:
+            lines.append(f"!{f}")
+        lines.append("")
+
+    if figure_files:
+        # Group figures by directory
+        fig_dirs: dict[str, list[str]] = {}
+        for f in figure_files:
+            d = str(Path(f).parent)
+            fig_dirs.setdefault(d, []).append(f)
+
+        lines.append("# Figures")
+        for d, files in sorted(fig_dirs.items()):
+            if d != ".":
+                lines.append(f"!{d}/")
+            for f in files:
+                lines.append(f"!{f}")
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
 
 
 def _is_essential(rel_path: str, project_dir: Path) -> bool:

@@ -25,58 +25,42 @@ overleaf init <project_id>      # link current dir to existing project
 overleaf status                 # show local changes (no network, fast)
 overleaf pull                   # pull remote changes
 overleaf push                   # push via git bridge (preserves URL + collaborators)
+overleaf deps                   # scan tex dependencies, preview .overleafignore
+overleaf deps --write           # scan and write .overleafignore
+overleaf deps --root paper.tex  # use a different root tex file
 ```
 
-## What Gets Uploaded (Whitelist Strategy)
-
-By default, only essential LaTeX files are uploaded:
-
-- **LaTeX source**: `.tex`, `.bib`, `.bst`, `.cls`, `.sty`, `.dtx`, `.ins`, `.ltx`, `.def`, `.cfg`, `.fd`
-- **Figures**: `.pdf`, `.png`, `.jpg`, `.jpeg`, `.eps`, `.svg`, `.tikz` (in any subdirectory)
-- **Data**: `.csv`, `.dat`
-- **Fonts**: `.ttf`, `.otf`, `.woff`, `.pfb`, `.afm`, `.tfm`, etc.
-
-**Automatically excluded**:
-- Compile artifacts: `*.aux`, `*.log`, `*.out`, `*.bbl`, `*.fls`, etc.
-- Compile-output PDFs: any `.pdf` with a matching `.tex` sibling (e.g. `main.pdf` next to `main.tex`)
-- Non-LaTeX files: `*.py`, `*.json`, `*.md`, `*.yaml`, `*.sh`, `*.toml`
-- Archives: `*.tar.gz`, `*.zip`, etc.
-- System junk: `.git/`, `__pycache__/`, `.DS_Store`
-
-No `.overleafignore` needed for typical projects — the defaults handle it.
-
-## Workflow: Push LaTeX to Overleaf
+## Workflow: Push LaTeX to Overleaf (IMPORTANT)
 
 When the user asks to "put this on Overleaf", "upload to Overleaf", or "create Overleaf project":
 
 1. Check if already linked: look for `.overleaf/manifest.json` in the project dir
-2. If not linked:
+2. **Always generate .overleafignore first** — this ensures only necessary files are uploaded:
    ```bash
    cd <latex_project_dir>
-   overleaf create "Project Name"
+   overleaf deps --write           # scan main.tex deps, write whitelist
+   overleaf create "Project Name"  # upload only whitelisted files
    ```
 3. If already linked and user made changes:
    ```bash
-   overleaf status   # check what changed
-   overleaf push     # push changes
+   overleaf deps --write   # refresh whitelist if tex deps changed
+   overleaf status          # check what changed
+   overleaf push            # push changes
    ```
+
+**Why `overleaf deps` matters:** Without it, any file with a LaTeX-related extension
+gets uploaded (including unused .sty, .bst, extra .tex files). `overleaf deps` scans
+`\input`, `\usepackage`, `\bibliography`, `\includegraphics` etc. from the root tex
+file and generates a precise whitelist. Only files actually referenced get uploaded.
 
 ## Workflow: Get Project from Overleaf
 
-When the user asks to "download from Overleaf", "clone Overleaf project":
-
-1. Find the project ID:
-   ```bash
-   overleaf projects   # list all, find the ID
-   ```
-2. Clone it:
-   ```bash
-   overleaf clone <project_id>
-   ```
+```bash
+overleaf projects               # list all, find the ID
+overleaf clone <project_id>     # download to local dir
+```
 
 ## Workflow: Sync Before Editing
-
-When editing a shared Overleaf project:
 
 ```bash
 cd <project_dir>
@@ -85,20 +69,31 @@ overleaf pull     # get latest changes from collaborators
 overleaf push     # push back
 ```
 
-## Custom Ignore Rules (.overleafignore)
+## How .overleafignore Works
 
-Create `.overleafignore` in project root for additional rules (gitignore syntax):
+`overleaf deps --write` generates a whitelist-mode `.overleafignore`:
 
 ```
-# Exclude extra files
-drafts/
-old_versions/
+# Ignore everything by default
+*
 
-# Force-include a non-standard file type
-!data/*.xlsx
+# LaTeX source
+!main.tex
+!math_commands.tex
+
+# Bibliography
+!references.bib
+
+# Style/class files (local, not on Overleaf)
+!neurips_2024.sty
+
+# Figures
+!figures/
+!figures/plot1.pdf
+!figures/plot2.pdf
 ```
 
-**Negation patterns** (`!`): override both default and custom ignore rules.
+This means ONLY the listed files are uploaded. To add extra files, append `!path/to/file`.
 
 ## Auth Notes
 
