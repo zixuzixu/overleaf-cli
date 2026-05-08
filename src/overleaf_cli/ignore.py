@@ -26,7 +26,7 @@ _ESSENTIAL_EXTS = frozenset((
 ))
 
 # Files always ignored regardless of extension
-_ALWAYS_IGNORE = [
+DEFAULT_PATTERNS = _ALWAYS_IGNORE = [
     # LaTeX compile intermediates
     "*.aux", "*.log", "*.out", "*.toc", "*.lof", "*.lot", "*.loa",
     "*.fls", "*.fdb_latexmk", "*.synctex.gz", "*.synctex",
@@ -280,9 +280,16 @@ def is_ignored(rel_path: str, patterns: list[str] | tuple[list[str], list[str]],
                *, project_dir: Path | None = None) -> bool:
     """Check if a relative path should be excluded from upload.
 
-    Uses a whitelist-first strategy:
-    1. Negation patterns (!) always force-include.
-    2. Explicit ignore patterns always exclude.
+    Uses a whitelist-first strategy with gitignore-style precedence:
+
+    0. If any parent directory of ``rel_path`` is excluded by a directory
+       pattern (e.g. ``arxiv_submission/``) and is not re-included by a
+       matching directory negation (e.g. ``!arxiv_submission/``), the
+       file is excluded. Bare filename negations like ``!main.tex``
+       cannot rescue files inside an excluded parent directory — this
+       matches gitignore semantics.
+    1. Negation patterns (!) force-include matching files.
+    2. Explicit ignore patterns exclude matching files.
     3. Compile-output PDFs (matching a .tex sibling) are excluded.
     4. Files with essential LaTeX extensions are included.
     5. Everything else is excluded.
@@ -298,6 +305,17 @@ def is_ignored(rel_path: str, patterns: list[str] | tuple[list[str], list[str]],
     parts = Path(rel_path).parts
     filename = Path(rel_path).name
     proj = project_dir or Path(".")
+
+    # 0. Parent-directory exclusion takes precedence over filename negation.
+    #    Once a parent is excluded by a directory pattern, only a matching
+    #    directory negation can re-include children. This prevents bare
+    #    filename rules like `!main.tex` from leaking files out of an
+    #    excluded subtree (e.g. `arxiv_submission/main.tex`).
+    ignored_dirs = {p.rstrip("/") for p in ignore_patterns if p.endswith("/")}
+    negated_dirs = {p.rstrip("/") for p in negate_patterns if p.endswith("/")}
+    for ancestor in parts[:-1]:
+        if ancestor in ignored_dirs and ancestor not in negated_dirs:
+            return True
 
     # 1. Check negation first — if a file matches a negation pattern, it is NOT ignored
     for pattern in negate_patterns:

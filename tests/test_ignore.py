@@ -131,3 +131,31 @@ def test_full_path_pattern():
     patterns = ["build/*.o"]
     assert is_ignored("build/main.o", patterns)
     assert not is_ignored("src/main.o", patterns)
+
+
+def test_excluded_parent_blocks_filename_negation():
+    """Bare filename negations cannot rescue files inside an excluded dir.
+
+    Regression: previously ``!main.tex`` would un-ignore
+    ``arxiv_submission/main.tex`` even though ``arxiv_submission/`` was
+    explicitly excluded. Matches gitignore semantics: re-including a
+    file inside an excluded parent requires a matching directory
+    negation.
+    """
+    patterns = (
+        ["*", "arxiv_submission/"],
+        ["main.tex", "neurips_2026.sty", "references.bib", "figures/"],
+    )
+    # files inside the excluded subtree stay excluded
+    assert is_ignored("arxiv_submission/main.tex", patterns)
+    assert is_ignored("arxiv_submission/neurips_2026.sty", patterns)
+    assert is_ignored("arxiv_submission/figures/fig1.pdf", patterns)
+    # files at project root still get rescued by their negations
+    assert not is_ignored("main.tex", patterns)
+    assert not is_ignored("neurips_2026.sty", patterns)
+
+
+def test_negated_dir_re_includes_children():
+    """A directory negation re-includes the subtree, allowing child rescue."""
+    patterns = (["*", "drafts/"], ["drafts/", "drafts/paper.tex"])
+    assert not is_ignored("drafts/paper.tex", patterns)
